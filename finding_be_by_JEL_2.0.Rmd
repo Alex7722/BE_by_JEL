@@ -1,0 +1,101 @@
+---
+title: "Behavioral economicss"
+subtitle: 'From JEL'
+date: "2020"
+author: Alex
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+    code_folding: hide
+    df_print: paged
+---
+setwd("/projects/digital_history/behavioral economics/behavioral economics by JEL")
+knitr::opts_chunk$set()
+
+# Core
+
+## Corpus
+
+```{r corpus}
+
+require(patchwork)
+plot_1 <- readRDS(file = "Plots/plot1.RDS")
+readRDS(file = "Plots/plot2.RDS")
+
+
+```
+
+##References then Citations
+```{r citations,cache=TRUE}
+require(patchwork)
+
+readRDS(file = "Plots/plot5.RDS")
+readRDS(file = "Plots/plot6.RDS")
+
+
+```
+
+
+#Core Extended
+
+##Corpus
+```{r corpus_extended,cache=TRUE}
+
+require(patchwork)
+
+readRDS(file = "Plots/plot3.RDS")
+readRDS(file = "Plots/plot4.RDS")
+
+
+```
+
+##References then Citations
+```{r citations_extended,cache=TRUE}
+require(patchwork)
+
+readRDS(file = "Plots/plot7.RDS")
+readRDS(file = "Plots/plot8.RDS")
+
+readRDS(file = "Plots/plot_most_cited.RDS")
+```
+
+
+
+#Communities of extended
+
+```{r communities,cache=TRUE}
+require(patchwork)
+
+readRDS(file = "Plots/plot9.RDS")
+readRDS(file = "Plots/plot10.RDS")
+readRDS(file = "Plots/plot11.RDS")
+
+
+```
+
+#Igraph
+##corpus
+```{r igraph,cache=TRUE}
+require(patchwork)
+readRDS(file = "Plots/network1.RDS")
+readRDS(file = "Plots/network2.RDS")
+
+readRDS(file = "Plots/plot12.RDS")
+readRDS(file = "Plots/plot13.RDS")
+readRDS(file = "Plots/plot14.RDS")
+
+```
+
+##all
+```{r igraph2,cache=TRUE}
+require(patchwork)
+readRDS(file = "Plots/network3.RDS")
+readRDS(file = "Plots/network4.RDS")
+
+readRDS(file = "Plots/plot15.RDS")
+readRDS(file = "Plots/plot16.RDS")
+readRDS(file = "Plots/plot17.RDS")
+
+```
