@@ -1,7 +1,4 @@
-# Load the package required to read XML files.
 library("XML")
-
-# Also load the other required package.
 library("methods")
 require(data.table)
 require(ggplot2)
@@ -30,25 +27,25 @@ ESH <- dbConnect(MySQL(), user=usr, password=pswd, dbname='OST_Expanded_SciHum',
 
 
 
+
+
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 #### PART I : GETTING THE CORPUS FROM XML, GETTING THE CORP, GETTING THE EXTENDED CORP ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 
-
-
-
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 #### Setting things up####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### Directory #########################
-setwd("/projects/digital_history/behavioral economics/behavioral economics by JEL")
 
-######################### Make some choices #########################
-list_discipline <- data.table(disciplines = c("Economics", "Management", "Psychology", "Neurosciences", "General Sciences", "Law", "Political Science and Public Administration"))
 
-######################### Functions #########################
+######################### Directory **********************
+setwd("/projects/data/alexandre/BE_JEL")
+
+######################### Functions **********************
+#not in
 `%notin%` <- Negate(`%in%`)
 
+#the mode
 Mode <- function(x) {
   ux <- unique(x)
   ux[which.max(tabulate(match(x, ux)))]
@@ -75,6 +72,11 @@ reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
   stats::reorder(new_x, by, FUN = fun)
 }
 
+
+######################### Basic DF **********************
+#DF of disciplines of interest for especialite_regrouped
+list_discipline <- data.table(disciplines = c("Economics", "Management", "Psychology", "Neurosciences", "General Sciences", "Law", "Political Science and Public Administration"))
+
 #DF of revues
 revues  <-  dbGetQuery(ESH, "SELECT Code_Revue, Revue, Code_Discipline FROM OST_Expanded_SciHum.Revues;") %>% data.table
 
@@ -92,53 +94,75 @@ all_aut_ad <- fread("BD_VM/EXTENDED_AUTHORS_ADRESS.csv", quote="")
 colnames(all_aut_ad)[colnames(all_aut) == "Nom_ISI"] <- "Nom"
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### BD ####
+#### Main Corpus and Nodes ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+######################### Importing and Cleaning **********************
 BE_extended <- fread("BD_VM/EXTENDED.csv", quote="")
+#only after 45
 BE_extended <- BE_extended[Annee_Bibliographique>1945]
+#get the name of disciplines
 BE_extended <- merge(BE_extended, disciplines, by="Code_Discipline")
+#regroup disciplines
 BE_extended[,ESpecialite_grouped := "Other"]; BE_extended[ESpecialite %in% list_discipline$disciplines, ESpecialite_grouped := ESpecialite]
+#not_econ
+BE_extended[,econ_bin := "Not Econ"]; BE_extended[ESpecialite == "Economics", econ_bin := "Economics"]; BE_extended[ESpecialite == "Management", econ_bin := "Economics"]
+#not_psy
+BE_extended[,psy_bin := "Not Psychology"]; BE_extended[ESpecialite == "Psychology", psy_bin := "Psychology"]
+
+#regroup Years
 BE_extended[,annee_regrouped := "<1980"]
 BE_extended[Annee_Bibliographique >= 1980 & Annee_Bibliographique < 1990,annee_regrouped := "80-89"]
 BE_extended[Annee_Bibliographique >= 1990 & Annee_Bibliographique < 2000,annee_regrouped := "90-99"]
 BE_extended[Annee_Bibliographique >= 2000 & Annee_Bibliographique < 2010,annee_regrouped := "00-09"]
 BE_extended[Annee_Bibliographique >= 2010 & Annee_Bibliographique < 2020,annee_regrouped := "10-19"]
-#share
-#counting articles by years
+
+######################### Count Stuff **********************
 BE_extended[,articles_by_year:=.N, Annee_Bibliographique]
 BE_extended[,disciplines_by_year:=.N, .(Annee_Bibliographique, ESpecialite_grouped)]
 BE_extended[,share_of_discipline:=disciplines_by_year/articles_by_year]
-colnames(BE_extended)[colnames(BE_extended) == "Id"] <- "Id_Art"
-######################### Netork direct citation #########################
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Autocitations ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+######################### Importing and Cleaning**********************
 BE_core_extended_autocit <- read.csv(file = 'BD_VM/EXTENDED_AUTOCIT.csv', header = TRUE, sep = "|") %>% data.table
+#changing some names
 colnames(BE_core_extended_autocit)[colnames(BE_core_extended_autocit) == "ID_Art_Source"] <- "Source"
 colnames(BE_core_extended_autocit)[colnames(BE_core_extended_autocit) == "ID_Art_Target"] <- "Target"
+#getting only autocitations
 BE_core_extended_autocit <- BE_core_extended_autocit[Source %in% BE_extended$ID_Art & Target %in% BE_extended$ID_Art]
-
-colnames(BE_extended)[colnames(BE_extended) == "ID_Art"] <- "Id"
+#export edges
 write.csv(BE_core_extended_autocit, file = "Networks/edges_BE_extended_autocit.csv", row.names=FALSE)
-
+#export nodes (after changing)
+colnames(BE_extended)[colnames(BE_extended) == "ID_Art"] <- "Id"
 BE_extended_nodes <- BE_extended[,.(Id, ESpecialite, ESpecialite_grouped, Annee_Bibliographique, Titre)]
 write.csv(BE_extended_nodes, file = "Networks/nodes_BE_extended_autocit.csv", row.names=FALSE)
+colnames(BE_extended)[colnames(BE_extended) == "Id"] <- "ID_Art"
 
-######################### Cocit#########################
-cocitation <- read.csv(file = 'BD_VM/EXTENDED_COCIT.csv', header = TRUE, sep = "|", quote="") %>% data.table
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Cocitations####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+######################### Importing and Cleaning **********************
 cocitation <- fread("BD_VM/EXTENDED_COCIT.csv", quote="", sep = "|")
+#some weird years in there
 cocitation <- cocitation[Annee_Bibliographique!=""]
 cocitation <- cocitation[Annee_Bibliographique!="Annee_Bibliographique"]
 cocitation[,.N,Annee_Bibliographique]
+#get disciplines
 cocitation <- merge(cocitation, disciplines, by="Code_Discipline")
 cocitation[,ESpecialite_grouped := "Other"]; cocitation[ESpecialite %in% list_discipline$disciplines, ESpecialite_grouped := ESpecialite]
 
-cocitation[, tail(.SD, 500)]
-#Nodes
+######################### All Nodes **********************
 cocitation_nodes <- cocitation[,.(Annee_Target, Nom_Target, ESpecialite_grouped), .(ItemID_Ref_Target)]
 setkey(cocitation_nodes, ItemID_Ref_Target, Annee_Target)
+#get mode year to reduce the probability of a mistake
 cocitation_nodes[,Annee_mode:=Mode(Annee_Target), ItemID_Ref_Target][,Annee_Target:=NULL]
-#cocitation_nodes[,Nom_mode:=Mode(Nom_Target), ItemID_Ref_Target][,Nom_Target:=NULL]
+#keep one of each
 cocitation_nodes <- cocitation_nodes[, head(.SD, 1), .(ItemID_Ref_Target)]
+#name for gephi
 colnames(cocitation_nodes)[colnames(cocitation_nodes) == "ItemID_Ref_Target"] <- "Id"
 
+######################### All Edges per Decades **********************
 #cocitation edges
 cocitation_edges <- function(x, y ### x=df of corpus, y=minimum number of connections
 ){
@@ -172,7 +196,6 @@ cocitation_edges <- function(x, y ### x=df of corpus, y=minimum number of connec
   return(cocitation_edgesf) # utilser cette ligne pour sortir un objet.
 }
 
-
 #per year
 cocitation[,annee_regrouped := "<1980"]
 cocitation[Annee_Bibliographique >= 1980 & Annee_Bibliographique < 1990,annee_regrouped := "80-89"]
@@ -195,6 +218,7 @@ write.csv(edges_BE_extented_cocit_90, file = "Networks/edges_BE_extended_cocit_9
 write.csv(edges_BE_extented_cocit_00, file = "Networks/edges_BE_extended_cocit_00.csv", row.names=FALSE)
 write.csv(edges_BE_extented_cocit_10, file = "Networks/edges_BE_extended_cocit_10.csv", row.names=FALSE)
 
+######################### All Nodes per Decades **********************
 #cocitation_nodes <- cocitation_nodes[,Label:=paste0(Nom_mode,",",Annee_mode)]
 nodes_BE_extented_cocit_70 <- cocitation_nodes[Id %in% edges_BE_extented_cocit_70$Target | Id %in% edges_BE_extented_cocit_70$Source]
 nodes_BE_extented_cocit_80 <- cocitation_nodes[Id %in% edges_BE_extented_cocit_80$Target | Id %in% edges_BE_extented_cocit_80$Source]
@@ -224,46 +248,76 @@ write.csv(nodes_BE_extented_cocit_10, file = "Networks/nodes_BE_extended_cocit_1
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### PART II : Plotting our corpus and extended corpus ####
+#### PART II : Plotting our corpus ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 
-
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### ggplot Extended_CORE####
+#### Corpus Information ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### set 1 (corpus info) #########################
 setkey(BE_extended, Annee_Bibliographique)
-#seeing distribution by years of our core extended
-corpus_extended_core1 <- ggplot(BE_extended, aes(x=Annee_Bibliographique)) + 
+######################### Histogram **********************
+ggplot(BE_extended, aes(x=Annee_Bibliographique)) + 
   geom_histogram(color="black", fill="white")
-BE_extended[,.(.N), .(Annee_Bibliographique)][order(N)]
-
+######################### Graph **********************
 ggplot(BE_extended[,.(.N), .(Annee_Bibliographique)][order(N)]
        , aes(x=Annee_Bibliographique, y=N)) +
   geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
   scale_x_continuous("Years", limits = c(1970, 2018)) +
   scale_y_continuous("Number of Articles")
+######################### Table **********************
+BE_extended[,.(.N), .(Annee_Bibliographique)][order(N)]
 
 
-######################### set 2 (discipline info) #########################
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Interdisciplinarity ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+setkey(BE_extended, Annee_Bibliographique, ESpecialite_grouped)
+######################### Tables **********************
 #seeing distribution of disciplines of our core extended
 BE_extended[,.(.N), .(ESpecialite)][order(N)]
-BE_extended[,.(.N), .(Annee_Bibliographique, ESpecialite)]
 
+######################### Histogram **********************
 #seeing distribution by disciplines of our core extended
-corpus_extended_core2 <- ggplot(BE_extended, aes(x=Annee_Bibliographique, color=ESpecialite_grouped, fill=ESpecialite_grouped)) +
+ggplot(BE_extended, aes(x=Annee_Bibliographique, color=ESpecialite_grouped, fill=ESpecialite_grouped)) +
   geom_histogram()
 
-
-corpus_extended_core3 <- ggplot(BE_extended[ESpecialite_grouped!="Economics"]
+######################### Smooth **********************
+#all disciplines
+ggplot(BE_extended
                                 , aes(x=Annee_Bibliographique, y=share_of_discipline, group=ESpecialite_grouped, color=ESpecialite_grouped)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
+  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years", limits = c(1970, 2018)) +
+  scale_x_continuous("Years", limits = c(1980, 2018)) +
+  scale_y_continuous("Share disicpline")
+#Economics, Psychology and Management
+ggplot(BE_extended
+       , aes(x=Annee_Bibliographique, y=share_of_discipline, group=ESpecialite_grouped, color=ESpecialite_grouped)) +
+  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2018)) +
+  scale_y_continuous("Share disicpline")
+#economics_bin
+ggplot(BE_extended[,n_econ_bin:=.N, .(Annee_Bibliographique, econ_bin)]
+       , aes(x=Annee_Bibliographique, y=n_econ_bin/articles_by_year, group=econ_bin, color=econ_bin)) +
+  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2018)) +
+  scale_y_continuous("Share disicpline")
+#psychology_bin
+ggplot(BE_extended[,n_psy_bin_bin:=.N, .(Annee_Bibliographique, psy_bin)]
+       , aes(x=Annee_Bibliographique, y=n_econ_bin/articles_by_year, group=psy_bin, color=psy_bin)) +
+  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2018)) +
   scale_y_continuous("Share disicpline")
 
-######################### set 2 (auteurs info) #########################
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Authors ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+######################### Corpus **********************
+#the corpus to compute
 authors_of_extended_core <- merge(BE_extended, all_aut[,.(ID_Art, Nom)], by = "ID_Art", all.x = TRUE, all.y = FALSE)
 #Remove second name
 authors_of_extended_core <- authors_of_extended_core[, name_short:= paste0(unlist(strsplit(Nom,"-"))[1],"-", substr(unlist(strsplit(Nom,"-"))[2],1,1) 
@@ -271,19 +325,16 @@ authors_of_extended_core <- authors_of_extended_core[, name_short:= paste0(unlis
 #Upper all
 authors_of_extended_core$name_short <- toupper(authors_of_extended_core$name_short)
 
-corpus_extended_core5 <- ggplot(authors_of_extended_core[name_short != "NA-NA"][,.(.N), name_short][order(N)][,tail(.SD,10)], aes(x=name_short, y=N)) +
+######################### Smooth v
+#top 10
+ggplot(authors_of_extended_core[name_short != "NA-NA"][name_short !="LI-J"][name_short !="LI-S"][name_short !="WANG-Y"][name_short !="ZHANG-Y"]
+       [,.(.N), name_short][order(N)][,tail(.SD,10)], aes(x=name_short, y=N)) +
   geom_bar(colour="black", stat="identity", position=position_dodge(), size=.3, fill="tomato2") + 
   theme(axis.text.x = element_text(angle=90, vjust=0.6))
 
-
-plot3 <- (corpus_extended_core1 + corpus_extended_core2) / corpus_extended_core3
-plot4 <- (corpus_core6 + corpus_core5) / corpus_core4
-
-saveRDS(plot3, file = "Plots/plot3.RDS")
-saveRDS(plot4, file = "Plots/plot4.RDS")
-
-
-#test institutions
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Institutions (IN TESTING) ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 institutions_of_extended_core <- merge(BE_core_extended_autocit, all_aut_ad[,.(ID_Art, Institution)], by.x = "Source", by.y = "ID_Art", allow.cartesian=TRUE)
 setnames(institutions_of_extended_core,"Institution", "Institution_Source")
 institutions_of_extended_core <- merge(institutions_of_extended_core, all_aut_ad[,.(ID_Art, Institution)], by.x = "Target", by.y = "ID_Art", allow.cartesian=TRUE)
@@ -292,208 +343,20 @@ write.csv(institutions_of_extended_core, file = "Networks/institutions_edges.csv
 institution_nodes <- BE_extended[Id %in% institutions_of_extended_core$Target | Id %in% institutions_of_extended_core$Source]
 write.csv(institution_nodes, file = "Networks/institutions_nodes.csv", row.names=FALSE)
 
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### PART IV : ANALYSIS OF CITATIOnS AND REFERENCES  ####
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### ANALYSIS of BE_core ####
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### citations and references to/of core #########################
-citations_to_core <- all_ref[ItemID_Ref %in% BE_core$ItemID_Ref]
-references_of_core <- all_ref[ID_Art %in% BE_core$ID_Art]
-######################### info about references #########################
-#replacing ItemID_Ref by ID_Art
-references_of_core <- merge(references_of_core[,.(ID_Art_source_BE = ID_Art, ItemID_Ref)], all_art[,.(ID_Art_target = ID_Art, ItemID_Ref)], by = "ItemID_Ref")
-
-#getting info about our ID_Art_source
-references_of_core <- merge(references_of_core, all_art[,.(ID_Art, Titre_source=Titre, Annee_Bibliographique_source=Annee_Bibliographique, Code_Revue_source=Code_Revue)], by.x = "ID_Art_source_BE", by.y = "ID_Art")
-references_of_core <- merge(references_of_core, revues[,.(Code_Revue_source=Code_Revue, Code_Discipline_source=Code_Discipline, Revue_source=Revue)], by.x = "Code_Revue_source", by.y = "Code_Revue_source", all = FALSE)
-references_of_core <- merge(references_of_core, disciplines[,.(Code_Discipline_source=Code_Discipline, ESpecialite_source=ESpecialite)], by = "Code_Discipline_source", all = FALSE)
-#getting info about our ID_Art_target
-references_of_core <- merge(references_of_core, all_art[,.(ID_Art, Code_Revue_target=Code_Revue)], by.x = "ID_Art_target", by.y = "ID_Art")
-references_of_core <- merge(references_of_core, revues[,.(Code_Revue_target=Code_Revue, Code_Discipline_target=Code_Discipline)], by.x = "Code_Revue_target", by.y = "Code_Revue_target", all = FALSE)
-references_of_core <- merge(references_of_core, disciplines[,.(Code_Discipline_target=Code_Discipline, ESpecialite_target=ESpecialite)], by = "Code_Discipline_target", all = FALSE)
-
-#grouping disciplines
-references_of_core[,ESpecialite_grouped_source := "Other"]; references_of_core[ESpecialite_source %in% list_discipline$disciplines, ESpecialite_grouped_source := ESpecialite_source]
-references_of_core[,ESpecialite_grouped_target:= "Other"]; references_of_core[ESpecialite_target %in% list_discipline$disciplines, ESpecialite_grouped_target := ESpecialite_target]
-
-#share of citations by year
-references_of_core[,n_references_by_year:=.N, Annee_Bibliographique_source]
-references_of_core[,share_references_by_year:=.N/n_references_by_year, .(Annee_Bibliographique_source,ESpecialite_grouped_target)]
-
-
-######################### info about citations #########################
-#replacing ItemID_Ref by ID_Art
-citations_to_core <- merge(citations_to_core[,.(ID_Art_source_BE = ID_Art, ItemID_Ref)], all_art[,.(ID_Art_target = ID_Art, ItemID_Ref)], by = "ItemID_Ref")
-
-#getting info about our ID_Art_source
-citations_to_core <- merge(citations_to_core, all_art[,.(ID_Art, Titre_source=Titre, Annee_Bibliographique_source=Annee_Bibliographique, Code_Revue_source=Code_Revue)], by.x = "ID_Art_source_BE", by.y = "ID_Art")
-citations_to_core <- merge(citations_to_core, revues[,.(Code_Revue_source=Code_Revue, Code_Discipline_source=Code_Discipline, Revue_source=Revue)], by.x = "Code_Revue_source", by.y = "Code_Revue_source", all = FALSE)
-citations_to_core <- merge(citations_to_core, disciplines[,.(Code_Discipline_source=Code_Discipline, ESpecialite_source=ESpecialite)], by = "Code_Discipline_source", all = FALSE)
-#getting info about our ID_Art_target
-citations_to_core <- merge(citations_to_core, all_art[,.(ID_Art, Code_Revue_target=Code_Revue)], by.x = "ID_Art_target", by.y = "ID_Art")
-citations_to_core <- merge(citations_to_core, revues[,.(Code_Revue_target=Code_Revue, Code_Discipline_target=Code_Discipline)], by.x = "Code_Revue_target", by.y = "Code_Revue_target", all = FALSE)
-citations_to_core <- merge(citations_to_core, disciplines[,.(Code_Discipline_target=Code_Discipline, ESpecialite_target=ESpecialite)], by = "Code_Discipline_target", all = FALSE)
-
-#grouping disciplines
-citations_to_core[,ESpecialite_grouped_source := "Other"]; citations_to_core[ESpecialite_source %in% list_discipline$disciplines, ESpecialite_grouped_source := ESpecialite_source]
-citations_to_core[,ESpecialite_grouped_target:= "Other"]; citations_to_core[ESpecialite_target %in% list_discipline$disciplines, ESpecialite_grouped_target := ESpecialite_target]
-
-#share of citations by year
-citations_to_core[,n_citations_by_year:=.N, Annee_Bibliographique_source];citations_to_core[,share_citations_by_year:=.N/n_citations_by_year, .(Annee_Bibliographique_source,ESpecialite_grouped_target)]
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### ggplot it####
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### set 1 (discipline info) #########################
-#seeing distribution by disciplines of references
-reference1_core <- ggplot(references_of_core[Annee_Bibliographique_source>1980 & Annee_Bibliographique_source<2016]
-                          , aes(x=Annee_Bibliographique_source, y=share_references_by_year, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Share of disicplines in references")
-
-
-reference2_core <- ggplot(references_of_core[,.(.N), .(Annee_Bibliographique_source, ESpecialite_grouped_target)][N>10][Annee_Bibliographique_source>1970 & Annee_Bibliographique_source<2016]
-                          , aes(x=Annee_Bibliographique_source, y=N, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Number of articles by discipline in references")
-
-#seeing distribution by disciplines of citations
-
-citations1_core <- ggplot(citations_to_core[Annee_Bibliographique_source>1980 & Annee_Bibliographique_source<2016]
-                          , aes(x=Annee_Bibliographique_source, y=share_citations_by_year, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Share of disciplines in citations")
-
-citations2_core <- ggplot(citations_to_core[,.(.N), .(Annee_Bibliographique_source, ESpecialite_grouped_target)][N>10][Annee_Bibliographique_source>1970 & Annee_Bibliographique_source<2016]
-                          , aes(x=Annee_Bibliographique_source, y=N, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Number of articles by discipline in citations")
-
-reference1_core/citations1_core
-
-
-plot5 <- reference1_core/citations1_core
-saveRDS(plot5, file = "Plots/plot5.RDS")
-
-plot6 <- reference2_core/citations2_core
-saveRDS(plot6, file = "Plots/plot6.RDS")
-
-citations_to_core[ESpecialite_grouped_source=="Behavioral Science & Complementary Psychology"][,.N,Revue_source][order(-N)][,head(.SD,10)]
-
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### ANALYSIS of BE ####
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### citations and references to/of core #########################
-citations_to_BE_extended <- all_ref[ItemID_Ref %in% BE_extended$ItemID_Ref]
-references_of_BE_extended <- all_ref[ID_Art %in% BE_extended$ID_Art]
-
-######################### info about references #########################
-#replacing ItemID_Ref by ID_Art
-references_of_BE_extended <- merge(references_of_BE_extended[,.(ID_Art_source_BE = ID_Art, ItemID_Ref)], all_art[,.(ID_Art_target = ID_Art, ItemID_Ref)], by = "ItemID_Ref")
-
-#getting info about our ID_Art_source
-references_of_BE_extended <- merge(references_of_BE_extended, all_art[,.(ID_Art, Titre_source=Titre, Annee_Bibliographique_source=Annee_Bibliographique, Code_Revue_source=Code_Revue)], by.x = "ID_Art_source_BE", by.y = "ID_Art")
-references_of_BE_extended <- merge(references_of_BE_extended, revues[,.(Code_Revue_source=Code_Revue, Code_Discipline_source=Code_Discipline, Revue_source=Revue)], by.x = "Code_Revue_source", by.y = "Code_Revue_source", all = FALSE)
-references_of_BE_extended <- merge(references_of_BE_extended, disciplines[,.(Code_Discipline_source=Code_Discipline, ESpecialite_source=ESpecialite)], by = "Code_Discipline_source", all = FALSE)
-#getting info about our ID_Art_target
-references_of_BE_extended <- merge(references_of_BE_extended, all_art[,.(ID_Art, Code_Revue_target=Code_Revue)], by.x = "ID_Art_target", by.y = "ID_Art")
-references_of_BE_extended <- merge(references_of_BE_extended, revues[,.(Code_Revue_target=Code_Revue, Code_Discipline_target=Code_Discipline)], by.x = "Code_Revue_target", by.y = "Code_Revue_target", all = FALSE)
-references_of_BE_extended <- merge(references_of_BE_extended, disciplines[,.(Code_Discipline_target=Code_Discipline, ESpecialite_target=ESpecialite)], by = "Code_Discipline_target", all = FALSE)
-
-#grouping disciplines
-references_of_BE_extended[,ESpecialite_grouped_source := "Other"]; references_of_BE_extended[ESpecialite_source %in% list_discipline$disciplines, ESpecialite_grouped_source := ESpecialite_source]
-references_of_BE_extended[,ESpecialite_grouped_target:= "Other"]; references_of_BE_extended[ESpecialite_target %in% list_discipline$disciplines, ESpecialite_grouped_target := ESpecialite_target]
-
-#share of citations by year
-references_of_BE_extended[,n_references_by_year:=.N, Annee_Bibliographique_source];references_of_BE_extended[,share_references_by_year:=.N/n_references_by_year, .(Annee_Bibliographique_source,ESpecialite_grouped_target)]
-
-######################### info about citations #########################
-#replacing ItemID_Ref by ID_Art
-citations_to_BE_extended <- merge(citations_to_BE_extended[,.(ID_Art_source_BE = ID_Art, ItemID_Ref)], all_art[,.(ID_Art_target = ID_Art, ItemID_Ref)], by = "ItemID_Ref")
-
-#getting info about our ID_Art_source
-citations_to_BE_extended <- merge(citations_to_BE_extended, all_art[,.(ID_Art, Titre_source=Titre, Annee_Bibliographique_source=Annee_Bibliographique, Code_Revue_source=Code_Revue)], by.x = "ID_Art_source_BE", by.y = "ID_Art")
-citations_to_BE_extended <- merge(citations_to_BE_extended, revues[,.(Code_Revue_source=Code_Revue, Code_Discipline_source=Code_Discipline, Revue_source=Revue)], by.x = "Code_Revue_source", by.y = "Code_Revue_source", all = FALSE)
-citations_to_BE_extended <- merge(citations_to_BE_extended, disciplines[,.(Code_Discipline_source=Code_Discipline, ESpecialite_source=ESpecialite)], by = "Code_Discipline_source", all = FALSE)
-#getting info about our ID_Art_target
-citations_to_BE_extended <- merge(citations_to_BE_extended, all_art[,.(ID_Art, Code_Revue_target=Code_Revue)], by.x = "ID_Art_target", by.y = "ID_Art")
-citations_to_BE_extended <- merge(citations_to_BE_extended, revues[,.(Code_Revue_target=Code_Revue, Code_Discipline_target=Code_Discipline)], by.x = "Code_Revue_target", by.y = "Code_Revue_target", all = FALSE)
-citations_to_BE_extended <- merge(citations_to_BE_extended, disciplines[,.(Code_Discipline_target=Code_Discipline, ESpecialite_target=ESpecialite)], by = "Code_Discipline_target", all = FALSE)
-
-#grouping disciplines
-citations_to_BE_extended[,ESpecialite_grouped_source := "Other"]; citations_to_BE_extended[ESpecialite_source %in% list_discipline$disciplines, ESpecialite_grouped_source := ESpecialite_source]
-citations_to_BE_extended[,ESpecialite_grouped_target:= "Other"]; citations_to_BE_extended[ESpecialite_target %in% list_discipline$disciplines, ESpecialite_grouped_target := ESpecialite_target]
-
-#share of citations by year
-citations_to_BE_extended[,n_citations_by_year:=.N, Annee_Bibliographique_source];citations_to_BE_extended[,share_citations_by_year:=.N/n_citations_by_year, .(Annee_Bibliographique_source,ESpecialite_grouped_target)]
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### ggplot it####
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### set 1 (discipline info) #########################
-#seeing distribution by disciplines of references
-reference1 <- ggplot(references_of_BE_extended[Annee_Bibliographique_source>1980 & Annee_Bibliographique_source<2016]
-                     , aes(x=Annee_Bibliographique_source, y=share_references_by_year, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Share of disicplines in references")
-
-
-reference2 <- ggplot(references_of_BE_extended[,.(.N), .(Annee_Bibliographique_source, ESpecialite_grouped_target)][N>10][Annee_Bibliographique_source>1970 & Annee_Bibliographique_source<2016]
-                                , aes(x=Annee_Bibliographique_source, y=N, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Number of articles by discipline in references", trans = 'log2')
-
-#seeing distribution by disciplines of citations
-
-citations1 <- ggplot(citations_to_BE_extended[Annee_Bibliographique_source>1980 & Annee_Bibliographique_source<2016]
-                     , aes(x=Annee_Bibliographique_source, y=share_citations_by_year, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Share of disciplines in citations")
-
-citations2 <- ggplot(citations_to_BE_extended[,.(.N), .(Annee_Bibliographique_source, ESpecialite_grouped_target)][N>10][Annee_Bibliographique_source>1970 & Annee_Bibliographique_source<2016]
-                     , aes(x=Annee_Bibliographique_source, y=N, group=ESpecialite_grouped_target, color=ESpecialite_grouped_target)) +
-  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years") +
-  scale_y_continuous("Number of articles by discipline in citations")
-
-plot7 <- reference1/citations1
-saveRDS(plot7, file = "Plots/plot7.RDS")
-
-plot8 <- reference2/citations2
-saveRDS(plot8, file = "Plots/plot8.RDS")
-
-
-
-
-
-
-
-
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### PART V : ANALYSIS OF COMMUNITIES  ####
+#### PART III : ANALYSIS OF CITATIONS AND REFERENCES (focus on economics)  ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### PART IV : ANALYSIS OF COMMUNITIES  ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Finding the lineage of the corpus ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 #most important articles by communities
 Communities <- read.csv(file = "Networks/Communities (10).csv") %>%  data.table
 setnames(Communities,"Cluster", "modularity_class")
@@ -521,9 +384,9 @@ Communities[,tail(.SD, 1), annee_regrouped][order(Annee_Bibliographique)]
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### TF-IDF Communities ####
+#### Taking a lookg at our communities ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-######################### setting things #########################
+######################### setting things **********************
 Communities <- read.csv(file = "Networks/Communities (10).csv") %>%  data.table
 setnames(Communities,"Cluster", "modularity_class")
 
@@ -550,7 +413,7 @@ gg_plot_communities[,tot_com:=.N, modularity_class]
 gg_plot_communities_disc <- merge(gg_plot_communities_disc, gg_plot_communities[,.(modularity_class, tot_com)][,tail(.SD, 1), modularity_class], by = "modularity_class")
 gg_plot_communities_disc[,share_disc_com:=N/tot_com]
 
-######################### Explore #########################
+######################### Explore **********************
 #order for graph
 gg_plot_communities_disc <- gg_plot_communities_disc[, share_disc_com := as.numeric(share_disc_com)]
 gg_plot_communities_disc[, ord := sprintf("%02i", frank(gg_plot_communities_disc, modularity_class, share_disc_com, ties.method = "first"))]
@@ -574,7 +437,7 @@ setkey(gg_plot_communities, modularity_class, indegree)
 
 gg_plot_communities[,tail(.SD, 3), modularity_class][,.(modularity_class, titre)]
 
-######################### Plot #########################
+######################### Plot **********************
 #useless
 communities_BE_extended_plot1 <- ggplot(gg_plot_communities[annee_bibliographique>=1980 & annee_bibliographique<2015]
                             , aes(x=annee_bibliographique, y=share_articles_by_year, group=especialite_grouped, color=especialite_grouped)) +
@@ -640,7 +503,7 @@ saveRDS(plot9, file = "Plots/plot9.RDS")
 plot10 <- communities_BE_extended_plot2
 saveRDS(plot10, file = "Plots/plot10.RDS")
 
-######################### communities info #########################
+######################### communities info **********************
 setkey(gg_plot_communities, modularity_class, indegree)
 #topc aritlces
 gg_plot_communities[, tail(.SD, 3), .(modularity_class)][,.(titre, modularity_class)]
@@ -766,8 +629,10 @@ ggplot(ref_communities[,.N,.(modularity_class, ESpecialite)][order(N)][,tail(.SD
 
 
 
-
-######################### tf #########################
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### TF-IDF####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+######################### tf **********************
 Communities <- read.csv(file = "Networks/Communities (10).csv") %>%  data.table
 setnames(Communities,"Cluster", "modularity_class")
 colnames(Communities)[colnames(Communities)=="Id"] <- "ID_Art"
