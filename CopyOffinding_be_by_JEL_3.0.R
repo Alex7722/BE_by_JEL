@@ -19,7 +19,7 @@ require(patchwork)
 require(leiden)
 library(readxl)
 library(gtools)
-
+library(directlabels)
 pswd = 'alex55Truc!1epistemo'
 usr = 'alexandre'
 ESH <- dbConnect(MySQL(), user=usr, password=pswd, dbname='OST_Expanded_SciHum',
@@ -75,16 +75,21 @@ reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
 
 ######################### Basic DF **********************
 #DF of disciplines of interest for especialite_regrouped
-list_discipline <- data.table(disciplines = c("Economics", "Management", "Psychology", "Neurosciences", "General Sciences", "Law", "Political Science and Public Administration"))
+list_discipline <- data.table(disciplines = c("Economics", "Management", "Psychology", "Neurosciences", "General Sciences", "Law"))
 
 #DF of revues
 revues  <-  dbGetQuery(ESH, "SELECT Code_Revue, Revue, Code_Discipline FROM OST_Expanded_SciHum.Revues;") %>% data.table
 
 #DF of disciplines
-disciplines  <-  dbGetQuery(ESH, "SELECT ESpecialite, Code_Discipline FROM OST_Expanded_SciHum.Disciplines;") %>% data.table
+disciplines <- dbGetQuery(ESH, "SELECT ESpecialite, Code_Discipline FROM OST_Expanded_SciHum.Disciplines;") %>% data.table
 disciplines <- disciplines[Code_Discipline>=101 & Code_Discipline<=109, ESpecialite:="Psychology"]
 disciplines <- disciplines[Code_Discipline==18, ESpecialite:="General Sciences"]
 disciplines <- disciplines[Code_Discipline==51, ESpecialite:="Neurosciences"]
+
+disciplines_big <- dbGetQuery(ESH, "SELECT EGrande_Discipline, Code_Discipline FROM OST_Expanded_SciHum.Disciplines;") %>% data.table
+disciplines_big <- disciplines_big[EGrande_Discipline=="Natural Sciences and Engineering", ESpecialite_big:="Other NSE"]
+disciplines_big <- disciplines_big[EGrande_Discipline=="Social Sciences and Humanities", ESpecialite_big:="Other SSH"]
+
 #DF of authors
 all_aut <- fread("BD_VM/EXTENDED_AUTHORS.csv", quote="")
 colnames(all_aut)[colnames(all_aut) == "Nom_ISI"] <- "Nom"
@@ -102,8 +107,9 @@ BE_extended <- fread("BD_VM/EXTENDED.csv", quote="")
 BE_extended <- BE_extended[Annee_Bibliographique>1945]
 #get the name of disciplines
 BE_extended <- merge(BE_extended, disciplines, by="Code_Discipline")
-#regroup disciplines
-BE_extended[,ESpecialite_grouped := "Other"]; BE_extended[ESpecialite %in% list_discipline$disciplines, ESpecialite_grouped := ESpecialite]
+BE_extended <- merge(BE_extended, disciplines_big, by="Code_Discipline")
+#regroup disciplines 
+BE_extended[,ESpecialite_grouped := ESpecialite_big]; BE_extended[ESpecialite %in% list_discipline$disciplines, ESpecialite_grouped := ESpecialite]
 #not_econ
 BE_extended[,econ_bin := "Not Econ"]; BE_extended[ESpecialite == "Economics", econ_bin := "Economics"]; BE_extended[ESpecialite == "Management", econ_bin := "Economics"]
 #not_psy
@@ -284,19 +290,18 @@ ggplot(BE_extended, aes(x=Annee_Bibliographique, color=ESpecialite_grouped, fill
 
 ######################### Smooth **********************
 #all disciplines
-ggplot(BE_extended
-                                , aes(x=Annee_Bibliographique, y=share_of_discipline, group=ESpecialite_grouped, color=ESpecialite_grouped)) +
-  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years", limits = c(1980, 2018)) +
-  scale_y_continuous("Share disicpline")
-#Economics, Psychology and Management
-ggplot(BE_extended
+ggplot(BE_extended[Annee_Bibliographique<2019][, head(.SD, 1), .(Annee_Bibliographique, ESpecialite_grouped)]
        , aes(x=Annee_Bibliographique, y=share_of_discipline, group=ESpecialite_grouped, color=ESpecialite_grouped)) +
-  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.3)+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  scale_x_continuous("Years", limits = c(1980, 2018)) +
-  scale_y_continuous("Share disicpline")
+  scale_x_continuous("Years", limits = c(1980, 2020)) +
+  scale_y_continuous("Share disicpline") +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = ESpecialite_grouped),
+                   data = tail(BE_extended[Annee_Bibliographique==2018,.N, .(ESpecialite_grouped, Annee_Bibliographique, share_of_discipline)], 8),
+                   nudge_x = 20,
+                   na.rm = TRUE,
+                   size = 4)
 #economics_bin
 ggplot(BE_extended[,n_econ_bin:=.N, .(Annee_Bibliographique, econ_bin)]
        , aes(x=Annee_Bibliographique, y=n_econ_bin/articles_by_year, group=econ_bin, color=econ_bin)) +
@@ -306,7 +311,7 @@ ggplot(BE_extended[,n_econ_bin:=.N, .(Annee_Bibliographique, econ_bin)]
   scale_y_continuous("Share disicpline")
 #psychology_bin
 ggplot(BE_extended[,n_psy_bin_bin:=.N, .(Annee_Bibliographique, psy_bin)]
-       , aes(x=Annee_Bibliographique, y=n_econ_bin/articles_by_year, group=psy_bin, color=psy_bin)) +
+       , aes(x=Annee_Bibliographique, y=n_psy_bin_bin/articles_by_year, group=psy_bin, color=psy_bin)) +
   geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95, span = 0.3)+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
   scale_x_continuous("Years", limits = c(1980, 2018)) +
@@ -332,6 +337,9 @@ ggplot(authors_of_extended_core[name_short != "NA-NA"][name_short !="LI-J"][name
   geom_bar(colour="black", stat="identity", position=position_dodge(), size=.3, fill="tomato2") + 
   theme(axis.text.x = element_text(angle=90, vjust=0.6))
 
+
+
+
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 #### Institutions (IN TESTING) ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
@@ -345,10 +353,6 @@ write.csv(institution_nodes, file = "Networks/institutions_nodes.csv", row.names
 
 
 
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### PART III : ANALYSIS OF CITATIONS AND REFERENCES (focus on economics)  ####
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 #### PART IV : ANALYSIS OF COMMUNITIES  ####
@@ -361,14 +365,14 @@ write.csv(institution_nodes, file = "Networks/institutions_nodes.csv", row.names
 Communities <- read.csv(file = "Networks/Communities (10).csv") %>%  data.table
 setnames(Communities,"Cluster", "modularity_class")
 #paper from the community
-Communities <- Communities[modularity_class==1, .(Id)]
+Communities <- Communities[modularity_class==0, .(Id)]
 #get the citations from the community
 Communities <- BE_core_extended_autocit[Source %in% Communities$Id]
-#degree
-Communities <- Communities[,.N,Target][order(N)]
 #info about articles
-Communities <- merge(Communities, BE_extended_nodes, by.x="Target", by.y = "Id")
-Communities[order(N)]
+Communities <- merge(Communities, BE_extended_nodes[,.(Id, Annee_Bibliographique, Titre)], by.x="Target", by.y = "Id")
+#degree
+Communities <- Communities[,local_degree:=.N,Target][order(local_degree)]
+Communities[order(local_degree)]
 #by decades
 Communities[,annee_regrouped := "<1980"]
 Communities[Annee_Bibliographique >= 1980 & Annee_Bibliographique < 1990,annee_regrouped := "80-89"]
@@ -376,19 +380,18 @@ Communities[Annee_Bibliographique >= 1990 & Annee_Bibliographique < 2000,annee_r
 Communities[Annee_Bibliographique >= 2000 & Annee_Bibliographique < 2010,annee_regrouped := "00-09"]
 Communities[Annee_Bibliographique >= 2010 & Annee_Bibliographique < 2020,annee_regrouped := "10-19"]
 
-setkey(Communities, annee_regrouped, N)
+setkey(Communities, annee_regrouped, local_degree)
 Communities[,tail(.SD, 1), annee_regrouped][order(Annee_Bibliographique)]
 
 
-
-
-
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-#### Taking a lookg at our communities ####
+#### Taking a look at our communities ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 ######################### setting things **********************
 Communities <- read.csv(file = "Networks/Communities (10).csv") %>%  data.table
 setnames(Communities,"Cluster", "modularity_class")
+Communities <- Communities[especialite_grouped=="General Biomedical Research", especialite_grouped:="General Sciences"]
+Communities <- Communities[especialite_grouped=="Neurology & Neurosurgery", especialite_grouped:="Neurosciences"]
 
 Communities <- Communities[,modularity_class:=modularity_class+1]
 Communities <- transform(Communities, modularity_class = as.character(modularity_class))
@@ -403,6 +406,65 @@ Communities[modularity_class==7, modularity_class:= "7-Intertemporal Choice"]
 Communities[modularity_class==8, modularity_class:= "8-Heuristics"]
 Communities[modularity_class==9, modularity_class:= "9-Behavioral Game Theory"]
 Communities[modularity_class==10, modularity_class:= "10-Hapiness BE"]
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Disciplines ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#disciplines
+Communities[,psy_bin := "Not Psychology"]; Communities[especialite_grouped == "Psychology", psy_bin := "Psychology"]
+Communities[,cog_bin := "Not Cog Sci"]; Communities[especialite_grouped == "Psychology", cog_bin := "Cog Sci"]; Communities[especialite_grouped == "Neurosciences", cog_bin := "Cog Sci"]; Communities[especialite_grouped == "General Sciences", cog_bin := "Cog Sci"]
+Communities[,eco_bin := "Not Economics"]; Communities[especialite_grouped == "Economics", eco_bin := "Economics"]; Communities[especialite_grouped == "Management", eco_bin := "Economics"]
+
+#total of articles by communities
+Communities[,tot_com:=.N, modularity_class]
+Communities[,tot_com_year:=.N, .(annee_bibliographique, modularity_class)]
+
+#share of eco in each community
+Communities[eco_bin=="Economics", n_eco_bin:=.N, .(annee_bibliographique, modularity_class)] #number of artices in economics
+Communities[eco_bin=="Not Economics", n_eco_bin:=(tot_com_year-.N), .(annee_bibliographique, modularity_class)] # copy the number for non eocnomics_articles
+
+ggplot(Communities[modularity_class!= "9-Behavioral Game Theory"][modularity_class!= "10-Hapiness BE"]
+       [annee_bibliographique<2019]
+       [, head(.SD, 1), .(annee_bibliographique,modularity_class)]
+, aes(x=annee_bibliographique, y=n_eco_bin/tot_com_year, group=modularity_class, color=modularity_class)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.90, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2022)) +
+  scale_y_continuous("Share Economics and Management", limits =c(0, 1)) +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = modularity_class),
+                   data = tail(Communities[annee_bibliographique==2018 & modularity_class!= "9-Behavioral Game Theory" & modularity_class!= "10-Hapiness BE"
+                                           ,.N, .(modularity_class, annee_bibliographique, n_eco_bin, tot_com_year)], 8),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4,
+                   direction="y")
+
+#share of cog in each community
+Communities[cog_bin=="Cog Sci", n_cog_bin:=.N, .(annee_bibliographique, modularity_class)] #same
+Communities[cog_bin=="Not Cog Sci", n_cog_bin:=(tot_com_year-.N), .(annee_bibliographique, modularity_class)]
+Communities[,share_cog_bin:=(n_cog_bin/tot_com_year),  .(annee_bibliographique, modularity_class)]
+
+ggplot(Communities[modularity_class!= "9-Behavioral Game Theory"][modularity_class!= "10-Hapiness BE"]
+       [annee_bibliographique<2019]
+       [, head(.SD, 1), .(annee_bibliographique,modularity_class)]
+       , aes(x=annee_bibliographique, y=share_cog_bin, group=modularity_class, color=modularity_class)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.90, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2022)) +
+  scale_y_continuous("Share Cognitive SCiences")  +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = modularity_class),
+                   data = tail(Communities[annee_bibliographique==2018 & modularity_class!= "9-Behavioral Game Theory" & modularity_class!= "10-Hapiness BE"
+                                           ,.N, .(modularity_class, annee_bibliographique, share_cog_bin)], 8),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4,
+                   direction="y")
+
+Communities[annee_bibliographique==2018]
+Communities[annee_bibliographique==2018 & modularity_class %like% "5",n_eco_bin/tot_com_year,.(modularity_class)]
+
 #seeing distribution by disciplines of our core extended
 gg_plot_communities <- Communities[,n_articles_by_year:=.N, .(annee_bibliographique, modularity_class)]
 gg_plot_communities <- gg_plot_communities[,tot_n_articles_by_year:=.N, .(annee_bibliographique)]
@@ -744,4 +806,166 @@ ggplot(Communities, aes(term, tf_idf, fill = modularity_class)) +
 
 
 
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### PART III : ANALYSIS OF CITATIONS AND REFERENCES (focus on economics)  ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Main Corpus and Nodes ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+######################### Importing and Cleaning **********************
+BE_ref <- fread("BD_VM/EXTENDED_REFERENCES_FULL.csv", quote="") #1 229 658
+#disciplines of target
+BE_ref <- merge(BE_ref, disciplines, by="Code_Discipline")
+setnames(BE_ref,"ESpecialite", "ESpecialite_Target")
+BE_ref <- merge(BE_ref, disciplines_big, by="Code_Discipline")
+setnames(BE_ref,"ESpecialite_big", "ESpecialite_big_Target")
+BE_ref[,EGrande_Discipline:=NULL]
+BE_ref[,Code_Discipline:=NULL]
+BE_ref[,ESpecialite_grouped_Target := ESpecialite_big_Target]; BE_ref[ESpecialite_Target %in% list_discipline$disciplines, ESpecialite_grouped_Target := ESpecialite_Target]
+#get info about sources
+BE_ref <- merge(BE_ref, BE_extended[,.(ID_Art, Annee_Bibliographique, ESpecialite)], by.x="ID_Art_Source", by.y="ID_Art")
+BE_ref <- merge(BE_ref, Communities[,.(Id, modularity_class)], by.x="ID_Art_Source", by.y="Id")
+
+######################### Getting what we want **********************
+#only after 45
+BE_ref <- BE_ref[Annee_Bibliographique>1945]
+#only economics
+BE_ref_eco <- BE_ref[ESpecialite=="Economics"]
+
+######################### Plotting **********************
+BE_ref_eco <- BE_ref_eco[, n_references_years:=.N, Annee_Bibliographique]
+BE_ref_eco <- BE_ref_eco[, n_specialite_years:=.N, .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+BE_ref_eco <- BE_ref_eco[, share_years:=n_specialite_years/n_references_years]
+BE_ref_eco <- BE_ref_eco[, n_articles_citing:=.N, ID_Art_Source]
+
+setkey(BE_ref_eco, Annee_Bibliographique, ESpecialite_grouped_Target) 
+
+ggplot(BE_ref_eco[Annee_Bibliographique<2019]
+       [ESpecialite_grouped_Target!="Economics"]
+       [, head(.SD, 1), .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+       , aes(x=Annee_Bibliographique, y=share_years, group=ESpecialite_grouped_Target, color=ESpecialite_grouped_Target)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2020)) +
+  scale_y_continuous("Share disicpline in References") +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = ESpecialite_grouped_Target),
+                   data = tail(BE_ref_eco[Annee_Bibliographique==2018,.N, .(Annee_Bibliographique, ESpecialite_grouped_Target, share_years)], 7),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4)
+ggsave("Graphs/ref_eco.png", width=286, height=215, units = "mm")
+
+######################### Social Preferences **********************
+
+BE_ref_eco_1 <- BE_ref_eco[modularity_class=="1-Social Preferences"]
+
+BE_ref_eco_1 <- BE_ref_eco_1[, n_references_years:=.N, Annee_Bibliographique]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_specialite_years:=.N, .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+BE_ref_eco_1 <- BE_ref_eco_1[, share_years:=n_specialite_years/n_references_years]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_articles_citing:=.N, ID_Art_Source]
+
+setkey(BE_ref_eco_1, Annee_Bibliographique, ESpecialite_grouped_Target) 
+
+ggplot(BE_ref_eco_1[Annee_Bibliographique<2019]
+       [ESpecialite_grouped_Target!="Economics"]
+       [, head(.SD, 1), .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+       , aes(x=Annee_Bibliographique, y=share_years, group=ESpecialite_grouped_Target, color=ESpecialite_grouped_Target)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2020)) +
+  scale_y_continuous("Share disicpline in References") +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = ESpecialite_grouped_Target),
+                   data = tail(BE_ref_eco_1[Annee_Bibliographique==2018,.N, .(Annee_Bibliographique, ESpecialite_grouped_Target, share_years)], 7),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4)
+ggsave("Graphs/ref_1SP.png", width=286, height=215, units = "mm")
+
+######################### Intertemporal Choice **********************
+BE_ref_eco_1 <- BE_ref_eco[modularity_class=="7-Intertemporal Choice"]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_references_years:=.N, Annee_Bibliographique]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_specialite_years:=.N, .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+BE_ref_eco_1 <- BE_ref_eco_1[, share_years:=n_specialite_years/n_references_years]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_articles_citing:=.N, ID_Art_Source]
+
+setkey(BE_ref_eco_1, Annee_Bibliographique, ESpecialite_grouped_Target) 
+
+ggplot(BE_ref_eco_1[Annee_Bibliographique<2019]
+       [ESpecialite_grouped_Target!="Economics"]
+       [, head(.SD, 1), .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+       , aes(x=Annee_Bibliographique, y=share_years, group=ESpecialite_grouped_Target, color=ESpecialite_grouped_Target)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2020)) +
+  scale_y_continuous("Share disicpline in References") +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = ESpecialite_grouped_Target),
+                   data = tail(BE_ref_eco_1[Annee_Bibliographique==2018,.N, .(Annee_Bibliographique, ESpecialite_grouped_Target, share_years)], 7),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4)
+ggsave("Graphs/ref_7IC.png", width=286, height=215, units = "mm")
+
+######################### Risk **********************
+BE_ref_eco_1 <- BE_ref_eco[modularity_class=="5-Risk and Uncertainty"]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_references_years:=.N, Annee_Bibliographique]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_specialite_years:=.N, .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+BE_ref_eco_1 <- BE_ref_eco_1[, share_years:=n_specialite_years/n_references_years]
+BE_ref_eco_1 <- BE_ref_eco_1[, n_articles_citing:=.N, ID_Art_Source]
+
+setkey(BE_ref_eco_1, Annee_Bibliographique, ESpecialite_grouped_Target) 
+
+ggplot(BE_ref_eco_1[Annee_Bibliographique<2019]
+       [ESpecialite_grouped_Target!="Economics"]
+       [, head(.SD, 1), .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+       , aes(x=Annee_Bibliographique, y=share_years, group=ESpecialite_grouped_Target, color=ESpecialite_grouped_Target)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2020)) +
+  scale_y_continuous("Share disicpline in References") +
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = ESpecialite_grouped_Target),
+                   data = tail(BE_ref_eco_1[Annee_Bibliographique==2018,.N, .(Annee_Bibliographique, ESpecialite_grouped_Target, share_years)], 7),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4)
+ggsave("Graphs/ref_5RU.png", width=286, height=215, units = "mm")
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#### Psychology####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#only after 45
+BE_ref <- BE_ref[Annee_Bibliographique>1945]
+#only economics
+BE_ref_psy <- BE_ref[ESpecialite=="Psychology"]
+
+######################### Plotting **********************
+BE_ref_psy <- BE_ref_psy[, n_references_years:=.N, Annee_Bibliographique]
+BE_ref_psy <- BE_ref_psy[, n_specialite_years:=.N, .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+BE_ref_psy <- BE_ref_psy[, share_years:=n_specialite_years/n_references_years]
+BE_ref_psy <- BE_ref_psy[, n_articles_citing:=.N, ID_Art_Source]
+
+setkey(BE_ref_psy, Annee_Bibliographique, ESpecialite_grouped_Target) 
+
+ggplot(BE_ref_psy[Annee_Bibliographique<2019]
+       [ESpecialite_grouped_Target!="Psychology"]
+       [, head(.SD, 1), .(Annee_Bibliographique, ESpecialite_grouped_Target)]
+       , aes(x=Annee_Bibliographique, y=share_years, group=ESpecialite_grouped_Target, color=ESpecialite_grouped_Target)) +
+  geom_smooth(method="auto", se=FALSE, fullrange=FALSE, level=0.95, span = 0.7)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous("Years", limits = c(1980, 2020)) +
+  scale_y_continuous("Share disicpline in References") 
+  scale_color_discrete(guide = FALSE) +
+  geom_label_repel(aes(label = ESpecialite_grouped_Target),
+                   data = tail(BE_ref_psy[ESpecialite_grouped_Target!="Psychology"][Annee_Bibliographique==2018,.N, .(Annee_Bibliographique, ESpecialite_grouped_Target, share_years)], 7),
+                   nudge_x = 3,
+                   na.rm = TRUE,
+                   size = 4)
+
+ggsave("Graphs/ref_psy.png", width=286, height=215, units = "mm")
+
+  
